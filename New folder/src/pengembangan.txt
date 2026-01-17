@@ -1,0 +1,86 @@
+﻿Blueprint Fitur Utama iPOS (Referensi Pengembangan Web App)
+Dokumen ini menjabarkan fitur-fitur kritikal dari aplikasi iPOS (Inspirasi Point of Sales) versi 5.0 yang menjadi standar industri retail UMKM di Indonesia. Tujuan dokumen ini adalah sebagai referensi fungsional untuk membangun sistem serupa berbasis Modern Web Framework.
+1. Modul Master Data (Core Database)
+Fondasi utama sistem. Fleksibilitas data di sini menentukan kemampuan aplikasi menangani kasus bisnis yang kompleks.
+A. Master Item (Barang)
+* Multi-Satuan (Konversi Stok):
+   * Satu ID barang memiliki hierarki satuan (Cth: 1 Dus = 12 Lusin = 144 Pcs).
+   * Logic: Stok tersimpan dalam Base Unit (satuan terkecil). Penjualan satuan besar otomatis mengonversi stok.
+* Multi-Harga (Price Levels):
+   * Harga berdasarkan level pelanggan (Retail, Sales, Agen, Distributor).
+   * Harga berdasarkan kuantitas (Beli 1 @10.000, Beli 10 @9.500).
+* Manajemen Barcode:
+   * Satu item bisa memiliki banyak kode barcode (Barcode pabrik, barcode internal, SKU).
+* Tipe Item:
+   * Inventory (Stok fisik).
+   * Non-Inventory (Jasa/Biaya Kirim).
+   * Rakitan/Assembly (Paket Lebaran, Parcel).
+* Atribut Tambahan: Lokasi Rak, Supplier Utama, HPP (Harga Pokok), Minimum Stok (Alert).
+B. Master Relasi
+* Pelanggan: Data lengkap, limit piutang (kredit limit), pengaturan level harga otomatis.
+* Supplier: Data lengkap, termin pembayaran.
+* Salesman: Pengaturan skema komisi (berdasarkan omzet atau per item).
+2. Modul Persediaan (Inventory Control)
+Sistem penjagaan aset fisik dan pencatatan mutasi barang.
+* Multi-Gudang & Cabang:
+   * Pemisahan stok antar lokasi (Gudang Utama, Toko Depan, Cabang A).
+* Transfer Item:
+   * Mutasi stok antar gudang (Surat Jalan Internal).
+* Stok Opname (Stock Adjustment):
+   * Penyesuaian selisih stok fisik vs sistem.
+   * Pilihan penyesuaian: Tambah Stok atau Kurangi Stok (otomatis menjurnal ke akun "Selisih Stok").
+* Kartu Stok (Audit Trail):
+   * Riwayat detail pergerakan 1 item: Masuk dari mana, keluar ke mana, retur kapan, jam berapa, oleh user siapa.
+* Item Masuk/Keluar Lain:
+   * Pencatatan barang rusak (spoilage), sampel, atau pemakaian sendiri (expense).
+3. Modul Pembelian (Purchasing - Inbound)
+Alur masuk barang dari Supplier.
+* Purchase Order (PO): Dokumen pemesanan (belum memengaruhi stok/hutang).
+* Pembelian Langsung:
+   * Input barang masuk (Stok bertambah).
+   * Pilihan pembayaran: Tunai atau Kredit (Termin/Tempo).
+   * Support PPN Masukan.
+* Retur Pembelian:
+   * Pengembalian barang ke supplier (Potong hutang atau terima uang kembali).
+* Riwayat Pembelian: Analisis fluktuasi harga beli dari supplier.
+* Pembayaran Hutang:
+   * Pembayaran cicilan hutang, pelunasan via Transfer/Cek/Giro/Tunai.
+4. Modul Penjualan (Sales - Outbound)
+Alur keluar barang ke Pelanggan.
+A. Point of Sales (Kasir Toko)
+* UI/UX Cepat: Didesain untuk input keyboard (Barcode scan -> Qty -> Enter). Minim penggunaan mouse.
+* Hold/Resume Transaksi: Menyimpan keranjang belanja sementara.
+* Pembayaran Majemuk: Split bill (Sebagian Tunai, sebagian Debit/QRIS).
+* Diskon Fleksibel: Diskon per baris item (%) atau diskon total nota (Rp).
+* Integrasi Hardware: Direct printing (Thermal), Cash Drawer kick, Customer Display.
+B. Penjualan Backoffice (Grosir/Partai)
+* Pesanan Penjualan (SO): Booking stok untuk pelanggan (Barang keep, belum keluar gudang).
+* Penjualan Faktur:
+   * Penjualan tempo (Piutang Usaha).
+   * Cetak Surat Jalan & Invoice (A4/Letter).
+   * Penambahan biaya lain-lain (Ongkir).
+* Retur Penjualan: Penerimaan barang kembali dari pelanggan (Barang rusak/salah kirim).
+* Pembayaran Piutang: Pelunasan tagihan pelanggan (Potong limit kredit).
+5. Modul Akuntansi (Accounting) - Killer Feature
+Fitur pembeda utama. Sistem ini otomatis menjurnal setiap transaksi operasional.
+* Bagan Akun (Chart of Accounts - COA): Struktur akun standar (Aset, Kewajiban, Ekuitas, Pendapatan, Beban).
+* Auto-Journaling Logic:
+   * Beli Barang: Debit Persediaan, Kredit Hutang/Kas.
+   * Jual Barang: Debit Kas/Piutang, Kredit Pendapatan Jual + Debit HPP, Kredit Persediaan.
+* Buku Besar (General Ledger): Rekapitulasi transaksi per akun.
+* Laporan Keuangan Real-time:
+   * Neraca (Balance Sheet).
+   * Laba Rugi (Profit & Loss).
+   * Arus Kas (Cash Flow) - Metode Langsung/Tidak Langsung.
+* Tutup Buku (Closing): Proses penguncian periode akuntansi dan pemindahan Saldo Laba ke Modal.
+6. Laporan & Analisis
+* Laporan Penjualan: Per item, per pelanggan, per sales, per wilayah, per jam (jam sibuk).
+* Laporan Stok: Nilai aset persediaan, stok minimum, slow moving/fast moving items.
+* Laporan Hutang/Piutang: Kartu hutang, umur piutang (aging schedule), jatuh tempo.
+7. Catatan Teknis untuk Modern Web Framework
+Tantangan yang harus diatasi saat memindahkan fitur iPOS ke Web App:
+1. Offline Capability (PWA): Kasir tidak boleh berhenti saat internet mati. Gunakan Service Workers dan IndexedDB untuk menyimpan transaksi lokal, lalu sinkronisasi (background sync) saat online.
+2. Web-to-Hardware Bridge: Browser tidak memiliki akses langsung ke port USB/Serial printer thermal.
+   * Solusi: Gunakan WebUSB API (Chrome only) atau buat Local Service/Daemon kecil di PC klien untuk menjembatani browser dengan printer.
+3. Keyboard Event Listener: Pastikan SPA (Single Page Application) Anda menangkap shortcut keys (F1, F12, Insert, Delete) secara global untuk kecepatan kasir.
+4. Presisi Desimal: Gunakan tipe data decimal/bigint di database dan library matematika presisi tinggi di frontend (hindari floating point error JavaScript standar pada perhitungan uang).
