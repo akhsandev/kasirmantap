@@ -64,7 +64,7 @@ export const printReceipt = (tx) => {
             </style>
         </head>
         <body>
-            <div class="text-center title">RUKO POS</div>
+            <div class="text-center title">RESKI JAYA</div>
             <div class="text-center sm">${new Date(tx.date).toLocaleString('id-ID')}</div>
             ${tx.customerName ? `<div class="text-center" style="margin-top:5px; font-size:14px;">${tx.customerName}</div>` : ''}
             
@@ -112,7 +112,7 @@ export const printReceipt = (tx) => {
 
 // --- 4. CETAK BLUETOOTH (RawBT) - VERSI PINTAR ---
 export const printBluetooth = (tx) => {
-    const storeName = "RUKO POS"; 
+    const storeName = "RESKI JAYA"; 
     const date = new Date(tx.date).toLocaleString('id-ID');
     const fmt = (n) => new Intl.NumberFormat('id-ID').format(n);
     
@@ -217,7 +217,7 @@ export const exportToExcel = async (db) => {
         const expenses = await db.expenses.toArray();
 
         const workbook = new ExcelJS.Workbook();
-        workbook.creator = 'Ruko POS';
+        workbook.creator = 'RESKI JAYA';
         workbook.created = new Date();
 
         const sheetTx = workbook.addWorksheet('Laporan Penjualan');
@@ -266,7 +266,7 @@ export const exportToExcel = async (db) => {
 export const generateExcelReport = async (sheetName, columns, data, fileName) => {
     try {
         const workbook = new ExcelJS.Workbook();
-        workbook.creator = 'Ruko POS';
+        workbook.creator = 'RESKI JAYA';
         workbook.created = new Date();
 
         const sheet = workbook.addWorksheet(sheetName);

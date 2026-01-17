@@ -13,7 +13,7 @@ const SettingsView = () => {
     
     // STATE SYSTEM
     const [uploading, setUploading] = useState(false);
-    const [restoring, setRestoring] = useState(false); 
+    const [restoring, setRestoring] = useState(false); // Status Restore
 
     // STATE MANAJEMEN USER
     const [users, setUsers] = useState([]);
@@ -81,7 +81,7 @@ const SettingsView = () => {
             const data = await res.json();
             if (data.success) {
                 setQrisImage(data.data.url); 
-                alert("Upload Berhasil! Silakan edit URL jika gambar tidak muncul.");
+                alert("Upload Berhasil! Jangan lupa klik Simpan Perubahan.");
             } else {
                 alert("Gagal Upload: " + (data.error?.message || "Error Imgbb"));
             }
@@ -109,6 +109,7 @@ const SettingsView = () => {
         }
     };
 
+    // --- FITUR DOWNLOAD JSON (BACKUP) ---
     const handleBackup = async () => {
         if(!confirm('Download backup data dari Cloud?')) return;
         try {
@@ -121,7 +122,7 @@ const SettingsView = () => {
             ]);
 
             const allData = {
-                products: prods.docs.map(d => ({ id: d.id, ...d.data() })), 
+                products: prods.docs.map(d => ({ id: d.id, ...d.data() })), // Simpan ID juga
                 transactions: txs.docs.map(d => ({ id: d.id, ...d.data() })),
                 customers: custs.docs.map(d => ({ id: d.id, ...d.data() })),
                 debts: debts.docs.map(d => ({ id: d.id, ...d.data() })),
@@ -137,12 +138,13 @@ const SettingsView = () => {
         } catch (e) { alert("Gagal backup: " + e.message); }
     };
 
+    // --- FITUR RESTORE JSON (PENTING!) ---
     const handleRestore = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
         if (!confirm("PERINGATAN KERAS!\n\nApakah Anda yakin ingin me-restore data?\nData yang ada di file JSON akan ditambahkan/menimpa data di Cloud.\n\nPastikan file JSON ini valid.")) {
-            e.target.value = null; 
+            e.target.value = null; // Reset input
             return;
         }
 
@@ -153,21 +155,28 @@ const SettingsView = () => {
             try {
                 const jsonData = JSON.parse(event.target.result);
                 
+                // Helper untuk batch upload (Firebase limit 500 ops per batch)
                 const batchUpload = async (collName, dataArray) => {
                     if (!dataArray || dataArray.length === 0) return;
+                    
+                    // Kita pecah array jadi potongan kecil (chunk) isi 400 biar aman
                     const chunkSize = 400; 
                     for (let i = 0; i < dataArray.length; i += chunkSize) {
                         const chunk = dataArray.slice(i, i + chunkSize);
                         const batch = writeBatch(db);
+                        
                         chunk.forEach(item => {
                             const ref = doc(db, collName, item.id || Date.now().toString());
+                            // Hapus field ID dari dalam data biar gak double
                             const { id, ...dataContent } = item; 
-                            batch.set(ref, dataContent, { merge: true }); 
+                            batch.set(ref, dataContent, { merge: true }); // Merge: Update kalau ada, Buat kalau belum
                         });
+                        
                         await batch.commit();
                     }
                 };
 
+                // Eksekusi Restore per Kategori
                 await batchUpload('products', jsonData.products);
                 await batchUpload('transactions', jsonData.transactions);
                 await batchUpload('customers', jsonData.customers);
@@ -175,7 +184,7 @@ const SettingsView = () => {
                 await batchUpload('expenses', jsonData.expenses);
 
                 alert("RESTORE BERHASIL!\nData Cloud telah diperbarui dari file JSON.");
-                window.location.reload(); 
+                window.location.reload(); // Refresh halaman agar data baru muncul
 
             } catch (err) {
                 console.error(err);
@@ -185,6 +194,7 @@ const SettingsView = () => {
                 e.target.value = null;
             }
         };
+
         reader.readAsText(file);
     };
 
@@ -194,6 +204,7 @@ const SettingsView = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 
+                {/* 1. INFO TOKO */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><StoreIcon/> Identitas Toko</h3>
                     <div className="space-y-4">
@@ -201,33 +212,11 @@ const SettingsView = () => {
                         <div><label className="text-xs font-bold text-slate-500">Alamat / Footer Struk</label><input value={storeAddress} onChange={e => setStoreAddress(e.target.value)} className="w-full border p-2 rounded" /></div>
                         
                         <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <label className="text-xs font-bold text-blue-600 mb-2 flex items-center gap-1"><ImageIcon size={12}/> Gambar QRIS (Upload/Edit)</label>
-                            
-                            <div className="mb-2">
-                                <label className="text-[10px] font-bold text-slate-400">1. Masukkan API Key Imgbb</label>
-                                <input value={imgbbKey} onChange={e => setImgbbKey(e.target.value)} className="w-full border p-1.5 rounded text-xs mb-1" placeholder="Paste API Key Imgbb disini..." />
-                            </div>
-
-                            <div className="flex gap-2 items-center">
-                                <div className="flex-1">
-                                    <label className="text-[10px] font-bold text-slate-400">2. Pilih Gambar QRIS</label>
-                                    <input type="file" accept="image/*" onChange={handleImageUpload} disabled={!imgbbKey || uploading} className="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
-                                </div>
-                                {uploading && <div className="text-xs font-bold text-blue-600 animate-pulse">Upload...</div>}
-                            </div>
-
-                            <div className="mt-2">
-                                <label className="text-[10px] font-bold text-slate-400">3. URL Gambar (Bisa Diedit Manual)</label>
-                                {/* SAYA HAPUS READONLY SUPAYA BISA DIEDIT */}
-                                <input value={qrisImage} onChange={e => setQrisImage(e.target.value)} className="w-full border p-2 rounded text-xs bg-white text-slate-700 font-mono" placeholder="https://..." />
-                                <p className="text-[10px] text-slate-400 mt-1">Jika gambar tidak muncul, coba edit URL (misal: ganti domain).</p>
-                            </div>
-                            {qrisImage && (
-                                <div className="mt-2 flex flex-col items-center border bg-white rounded p-2">
-                                    <img src={qrisImage} alt="Preview QRIS" className="h-24 object-contain" onError={(e) => {e.target.src='https://placehold.co/100?text=Error';}}/>
-                                    <span className="text-[10px] text-slate-400 mt-1">Preview</span>
-                                </div>
-                            )}
+                            <label className="text-xs font-bold text-blue-600 mb-2 flex items-center gap-1"><ImageIcon size={12}/> Gambar QRIS (Upload)</label>
+                            <div className="mb-2"><label className="text-[10px] font-bold text-slate-400">1. Masukkan API Key Imgbb</label><input value={imgbbKey} onChange={e => setImgbbKey(e.target.value)} className="w-full border p-1.5 rounded text-xs mb-1" placeholder="Paste API Key Imgbb disini..." /></div>
+                            <div className="flex gap-2 items-center"><div className="flex-1"><label className="text-[10px] font-bold text-slate-400">2. Pilih Gambar QRIS</label><input type="file" accept="image/*" onChange={handleImageUpload} disabled={!imgbbKey || uploading} className="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/></div>{uploading && <div className="text-xs font-bold text-blue-600 animate-pulse">Upload...</div>}</div>
+                            <div className="mt-2"><label className="text-[10px] font-bold text-slate-400">3. Hasil URL</label> <input value={qrisImage} onChange={e => setQrisImage(e.target.value)} className="w-full border p-2 rounded text-xs bg-white text-slate-700 font-mono" placeholder="https://..." /></div>
+                            {qrisImage && <img src={qrisImage} alt="Preview" className="h-20 object-contain mt-2 border bg-white rounded"/>}
                         </div>
 
                         <div><label className="text-xs font-bold text-slate-500">Info Rekening Bank (Text)</label><textarea value={bankAccount} onChange={e => setBankAccount(e.target.value)} className="w-full border p-2 rounded h-20" placeholder="BCA 12345 a/n Budi" /></div>
@@ -241,6 +230,7 @@ const SettingsView = () => {
                     </div>
                 </div>
 
+                {/* 2. MANAJEMEN USER */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><User/> Manajemen User</h3>
                     <form onSubmit={handleAddUser} className="flex gap-2 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-100">
@@ -259,19 +249,35 @@ const SettingsView = () => {
                     </div>
                 </div>
 
+                {/* 3. DATABASE CONTROL (BACKUP & RESTORE) */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-2">
                     <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Database/> Kontrol Database (Penting)</h3>
+                    
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* BACKUP */}
                         <div className="p-5 bg-blue-50 border border-blue-200 rounded-xl">
                             <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><Save size={18}/> Backup Data</h4>
                             <p className="text-xs text-blue-600 mb-4">Download semua data (Produk, Transaksi, Pelanggan, dll) dari Cloud ke komputer Anda dalam format file <b>.JSON</b>.</p>
-                            <button onClick={handleBackup} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 flex justify-center gap-2 shadow-lg shadow-blue-200">Download Backup (.JSON)</button>
+                            <button onClick={handleBackup} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 flex justify-center gap-2 shadow-lg shadow-blue-200">
+                                Download Backup (.JSON)
+                            </button>
                         </div>
+
+                        {/* RESTORE (DANGER ZONE) */}
                         <div className="p-5 bg-red-50 border border-red-200 rounded-xl relative overflow-hidden">
                             {restoring && <div className="absolute inset-0 bg-white/80 z-10 flex items-center justify-center font-bold text-red-600 animate-pulse">Sedang Memulihkan Data...</div>}
+                            
                             <h4 className="font-bold text-red-800 mb-2 flex items-center gap-2"><AlertTriangle size={18}/> Restore Data</h4>
-                            <p className="text-xs text-red-600 mb-4">Masukkan file <b>.JSON</b> untuk mengembalikan data yang hilang. <br/><b>Hati-hati:</b> Data di file akan digabungkan ke Cloud.</p>
-                            <label className="w-full bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 flex justify-center gap-2 shadow-lg shadow-red-200 cursor-pointer transition-all active:scale-95"><Upload size={18}/><span>{restoring ? 'Memproses...' : 'Pilih File JSON & Restore'}</span><input type="file" accept=".json" onChange={handleRestore} disabled={restoring} className="hidden" /></label>
+                            <p className="text-xs text-red-600 mb-4">
+                                Masukkan file <b>.JSON</b> untuk mengembalikan data yang hilang. <br/>
+                                <b>Hati-hati:</b> Data di file akan digabungkan ke Cloud.
+                            </p>
+                            
+                            <label className="w-full bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 flex justify-center gap-2 shadow-lg shadow-red-200 cursor-pointer transition-all active:scale-95">
+                                <Upload size={18}/>
+                                <span>{restoring ? 'Memproses...' : 'Pilih File JSON & Restore'}</span>
+                                <input type="file" accept=".json" onChange={handleRestore} disabled={restoring} className="hidden" />
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -279,5 +285,7 @@ const SettingsView = () => {
         </div>
     );
 };
+
 const StoreIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>);
+
 export default SettingsView;

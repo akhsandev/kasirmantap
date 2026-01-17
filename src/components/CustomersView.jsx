@@ -1,121 +1,131 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../db';
-import { formatRupiah } from '../utils';
-import { Users, Search, Save, Edit2, Trash2, UserPlus, Star } from 'lucide-react';
+// MIGRASI FIREBASE
+import { db, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, query, orderBy } from '../firebase';
+import { Users, Search, Plus, Trash2, Edit, Save, X, Star } from 'lucide-react';
 
 const CustomersView = () => {
     const [customers, setCustomers] = useState([]);
     const [search, setSearch] = useState('');
-    const [form, setForm] = useState({ id: null, name: '', phone: '', level: 'retail' });
-    const [isEditing, setIsEditing] = useState(false);
+    const [modalOpen, setModalOpen] = useState(false);
+    const [editingCust, setEditingCust] = useState(null);
+    const [formData, setFormData] = useState({ name: '', phone: '', level: 'umum' });
 
-    useEffect(() => { loadData(); }, []);
+    useEffect(() => { loadCustomers(); }, []);
 
-    const loadData = async () => {
-        const all = await db.customers.toArray();
-        setCustomers(all.reverse());
-    };
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (!form.name) return alert("Nama wajib diisi");
-
+    // LOAD DARI CLOUD
+    const loadCustomers = async () => {
         try {
-            const data = {
-                name: form.name,
-                phone: form.phone,
-                level: form.level // 'retail' atau 'grosir'
-            };
-
-            if (form.id) {
-                await db.customers.update(form.id, data);
-            } else {
-                await db.customers.add(data);
-            }
-            
-            setForm({ id: null, name: '', phone: '', level: 'retail' });
-            setIsEditing(false);
-            loadData();
-            alert("Pelanggan tersimpan!");
-        } catch (err) {
-            console.error(err);
+            const q = query(collection(db, 'customers'), orderBy('name'));
+            const snapshot = await getDocs(q);
+            const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            setCustomers(data);
+        } catch (e) {
+            console.error("Gagal load customer:", e);
         }
     };
 
-    const handleEdit = (c) => {
-        setForm(c);
-        setIsEditing(true);
+    const handleSave = async (e) => {
+        e.preventDefault();
+        try {
+            if (editingCust) {
+                // UPDATE CLOUD
+                const ref = doc(db, 'customers', editingCust.id);
+                await updateDoc(ref, formData);
+            } else {
+                // ADD CLOUD
+                await addDoc(collection(db, 'customers'), {
+                    ...formData,
+                    created_at: new Date().toISOString()
+                });
+            }
+            setModalOpen(false); setEditingCust(null); setFormData({ name: '', phone: '', level: 'umum' });
+            loadCustomers();
+        } catch (e) { alert("Gagal simpan: " + e.message); }
     };
 
     const handleDelete = async (id) => {
-        if(confirm("Hapus pelanggan? Data hutang (jika ada) mungkin akan orphan.")) {
-            await db.customers.delete(id);
-            loadData();
+        if (confirm('Hapus pelanggan ini dari Cloud?')) {
+            try {
+                await deleteDoc(doc(db, 'customers', id));
+                loadCustomers();
+            } catch (e) { alert("Gagal hapus: " + e.message); }
         }
     };
 
     const filtered = customers.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
 
     return (
-        <div className="flex flex-col md:flex-row h-full bg-slate-100 p-6 gap-6 overflow-hidden">
-            {/* FORM INPUT (KIRI) */}
-            <div className="w-full md:w-1/3 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
-                <h3 className="font-bold text-lg mb-4 text-slate-700 flex items-center gap-2">
-                    {isEditing ? <Edit2 size={20}/> : <UserPlus size={20}/>}
-                    {isEditing ? 'Edit Pelanggan' : 'Pelanggan Baru'}
-                </h3>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase">Nama Lengkap</label>
-                        <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="w-full border p-2 rounded outline-none focus:border-blue-500" required placeholder="Contoh: Toko Berkah" />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase">No. HP / WA</label>
-                        <input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} className="w-full border p-2 rounded outline-none focus:border-blue-500" placeholder="08..." />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-slate-500 uppercase">Level Harga</label>
-                        <select value={form.level || 'retail'} onChange={e => setForm({...form, level: e.target.value})} className="w-full border p-2 rounded outline-none focus:border-blue-500 bg-white">
-                            <option value="retail">Umum (Harga Ecer)</option>
-                            <option value="grosir">Reseller / Grosir (Harga Murah)</option>
-                        </select>
-                        <p className="text-[10px] text-slate-400 mt-1">*Pelanggan Grosir otomatis mendapat harga spesial di kasir.</p>
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                        {isEditing && <button type="button" onClick={() => { setIsEditing(false); setForm({ id: null, name: '', phone: '', level: 'retail' }); }} className="flex-1 bg-slate-200 py-2 rounded font-bold text-slate-600">Batal</button>}
-                        <button type="submit" className="flex-[2] bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">Simpan</button>
-                    </div>
-                </form>
+        <div className="flex flex-col h-full bg-slate-50 p-6 overflow-hidden">
+            <div className="flex justify-between items-center mb-6">
+                <div>
+                    <h1 className="text-2xl font-black text-slate-800 flex items-center gap-2"><Users className="text-blue-600"/> Pelanggan</h1>
+                    <p className="text-slate-500 text-sm">Manajemen data pelanggan & level member (Cloud).</p>
+                </div>
+                <button onClick={() => { setEditingCust(null); setFormData({ name: '', phone: '', level: 'umum' }); setModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all"><Plus size={18}/> Baru</button>
             </div>
 
-            {/* LIST DATA (KANAN) */}
-            <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
-                <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
-                    <h3 className="font-bold text-slate-700 flex items-center gap-2"><Users size={18}/> Data Pelanggan</h3>
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col flex-1 overflow-hidden">
+                <div className="p-4 border-b border-slate-100">
                     <div className="relative">
-                        <Search className="absolute left-2 top-2.5 w-4 h-4 text-slate-400"/>
-                        <input value={search} onChange={e => setSearch(e.target.value)} className="pl-8 pr-4 py-2 border rounded-lg text-sm outline-none" placeholder="Cari nama..." />
+                        <Search className="absolute left-3 top-3 text-slate-400" size={18}/>
+                        <input value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 focus:border-blue-500 outline-none" placeholder="Cari nama pelanggan..." />
                     </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2">
-                    {filtered.map(c => (
-                        <div key={c.id} className="flex justify-between items-center p-3 hover:bg-slate-50 border-b border-dashed last:border-0">
-                            <div>
-                                <div className="font-bold text-slate-800 flex items-center gap-2">
-                                    {c.name}
-                                    {c.level === 'grosir' && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1"><Star size={10} fill="currentColor"/> GROSIR</span>}
-                                </div>
-                                <div className="text-xs text-slate-400">{c.phone || '-'}</div>
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={() => handleEdit(c)} className="p-2 text-blue-500 hover:bg-blue-50 rounded"><Edit2 size={16}/></button>
-                                <button onClick={() => handleDelete(c.id)} className="p-2 text-red-500 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
-                            </div>
-                        </div>
-                    ))}
-                    {filtered.length === 0 && <div className="text-center p-10 text-slate-400">Belum ada data pelanggan.</div>}
+                <div className="flex-1 overflow-y-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs sticky top-0">
+                            <tr><th className="px-6 py-4">Nama</th><th className="px-6 py-4">No. HP</th><th className="px-6 py-4">Level</th><th className="px-6 py-4 text-center">Aksi</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {filtered.map(c => (
+                                <tr key={c.id} className="hover:bg-blue-50 transition-colors">
+                                    <td className="px-6 py-4 font-bold text-slate-700">{c.name}</td>
+                                    <td className="px-6 py-4 text-slate-500">{c.phone || '-'}</td>
+                                    <td className="px-6 py-4">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase border ${c.level === 'vip' ? 'bg-purple-100 text-purple-700 border-purple-200' : c.level === 'grosir' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                            {c.level}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex justify-center gap-2">
+                                            <button onClick={() => { setEditingCust(c); setFormData(c); setModalOpen(true); }} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg"><Edit size={16}/></button>
+                                            <button onClick={() => handleDelete(c.id)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg"><Trash2 size={16}/></button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {filtered.length === 0 && <div className="p-8 text-center text-slate-400">Data tidak ditemukan.</div>}
                 </div>
             </div>
+
+            {modalOpen && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl animate-scale-up">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold text-lg">{editingCust ? 'Edit Pelanggan' : 'Pelanggan Baru'}</h3>
+                            <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-red-500"><X/></button>
+                        </div>
+                        <form onSubmit={handleSave} className="space-y-4">
+                            <div><label className="block text-xs font-bold text-slate-500 mb-1">Nama Lengkap</label><input required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border p-3 rounded-lg font-bold" placeholder="Nama Pelanggan"/></div>
+                            <div><label className="block text-xs font-bold text-slate-500 mb-1">Nomor HP / WA</label><input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full border p-3 rounded-lg" placeholder="08..."/></div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Level Member</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {['umum', 'grosir', 'vip'].map(l => (
+                                        <button type="button" key={l} onClick={() => setFormData({...formData, level: l})} className={`py-2 rounded-lg text-sm font-bold capitalize border ${formData.level === l ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>{l}</button>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-2">
+                                    * <b>Grosir/VIP:</b> Otomatis dapat harga murah walau beli satuan.
+                                </p>
+                            </div>
+                            <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg mt-2">Simpan Data Cloud</button>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

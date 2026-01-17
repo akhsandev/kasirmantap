@@ -1,167 +1,111 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../db';
+// MIGRASI FIREBASE
+import { db, collection, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from '../firebase';
+import { BookUser, Search, Trash2, CheckCircle, Clock } from 'lucide-react';
 import { formatRupiah } from '../utils';
-import { BookUser, Wallet, History, User } from 'lucide-react';
 
 const KasbonView = () => {
-    const [customers, setCustomers] = useState([]);
-    const [selectedCustomer, setSelectedCustomer] = useState(null);
-    const [customerHistory, setCustomerHistory] = useState([]);
-    const [payAmount, setPayAmount] = useState('');
+    const [debts, setDebts] = useState([]);
+    const [search, setSearch] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    useEffect(() => {
-        loadCustomers();
-    }, []);
+    useEffect(() => { loadDebts(); }, []);
 
-    const loadCustomers = async () => {
-        const allCust = await db.customers.toArray();
-        const allDebts = await db.debts.toArray();
-
-        // Hitung saldo setiap customer
-        const withBalance = allCust.map(c => {
-            const myDebts = allDebts.filter(d => d.customerId === c.id);
-            const balance = myDebts.reduce((acc, d) => 
-                d.type === 'borrow' ? acc + d.amount : acc - d.amount
-            , 0);
-            return { ...c, balance };
-        }).filter(c => c.balance > 0); // Hanya tampilkan yang punya hutang
-
-        setCustomers(withBalance.sort((a,b) => b.balance - a.balance));
+    const loadDebts = async () => {
+        setLoading(true);
+        try {
+            // Ambil semua data hutang dari Cloud
+            const q = query(collection(db, 'debts'), orderBy('date', 'desc'));
+            const snapshot = await getDocs(q);
+            const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            setDebts(data);
+        } catch (e) {
+            console.error("Gagal load kasbon:", e);
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const selectCustomer = async (c) => {
-        setSelectedCustomer(c);
-        const history = await db.debts.where('customerId').equals(c.id).reverse().sortBy('date');
-        setCustomerHistory(history);
-        setPayAmount('');
+    // LOGIKA PELUNASAN (Update Cloud)
+    const handlePay = async (item) => {
+        const payStr = prompt(`Sisa Hutang: ${formatRupiah(item.amount)}\nMasukkan jumlah pembayaran:`);
+        if (!payStr) return;
+
+        const payVal = parseInt(payStr);
+        if (isNaN(payVal) || payVal <= 0) return alert('Jumlah tidak valid!');
+
+        const newAmount = item.amount - payVal;
+
+        try {
+            const ref = doc(db, 'debts', item.id);
+            if (newAmount <= 0) {
+                // LUNAS -> Hapus data atau tandai lunas (Kita hapus saja biar bersih)
+                if (confirm('Hutang LUNAS! Hapus catatan ini?')) {
+                    await deleteDoc(ref);
+                } else {
+                    await updateDoc(ref, { amount: 0, status: 'lunas' });
+                }
+            } else {
+                // BAYAR SEBAGIAN -> Update sisa
+                await updateDoc(ref, { amount: newAmount });
+            }
+            loadDebts(); // Refresh
+        } catch (e) { alert("Gagal update: " + e.message); }
     };
 
-    const handlePay = async (e) => {
-        e.preventDefault();
-        const amount = parseInt(payAmount);
-        if (!amount || amount <= 0) return alert('Masukkan jumlah pembayaran yang valid');
+    const filtered = debts.filter(d => 
+        (d.customerName && d.customerName.toLowerCase().includes(search.toLowerCase()))
+    );
 
-        await db.debts.add({
-            customerId: selectedCustomer.id,
-            date: new Date().toISOString(),
-            amount: amount,
-            type: 'pay',
-            synced: 0
-        });
-
-        alert('Pembayaran dicatat!');
-        loadCustomers();
-        // Update tampilan detail secara manual
-        const history = await db.debts.where('customerId').equals(selectedCustomer.id).reverse().sortBy('date');
-        setCustomerHistory(history);
-        setPayAmount('');
-        
-        // Update saldo customer terpilih di UI
-        const newBalance = selectedCustomer.balance - amount;
-        setSelectedCustomer({...selectedCustomer, balance: newBalance});
-    };
+    const totalHutang = filtered.reduce((sum, d) => sum + (d.amount || 0), 0);
 
     return (
-        <div className="flex h-full bg-slate-100 p-4 md:p-6 gap-6 overflow-hidden">
-            
-            {/* LIST DAFTAR PENGUTANG (KIRI) */}
-            <div className={`flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col ${selectedCustomer ? 'hidden md:flex' : 'flex'}`}>
-                <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex items-center gap-2">
-                    <BookUser className="text-orange-500"/> Buku Kasbon
+        <div className="flex flex-col h-full bg-slate-50 p-6 overflow-hidden">
+            <div className="flex justify-between items-center mb-6">
+                <div>
+                    <h1 className="text-2xl font-black text-slate-800 flex items-center gap-2"><BookUser className="text-blue-600"/> Buku Kasbon</h1>
+                    <p className="text-slate-500 text-sm">Catatan piutang pelanggan (Cloud).</p>
                 </div>
-                <div className="flex-1 overflow-y-auto">
-                    {customers.length === 0 && <div className="p-6 text-center text-slate-400">Tidak ada data hutang aktif.</div>}
-                    {customers.map(c => (
-                        <div 
-                            key={c.id} 
-                            onClick={() => selectCustomer(c)}
-                            className={`p-4 border-b hover:bg-orange-50 cursor-pointer flex justify-between items-center transition-all ${selectedCustomer?.id === c.id ? 'bg-orange-50 border-l-4 border-l-orange-500' : ''}`}
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
-                                    <User size={20}/>
-                                </div>
-                                <div className="font-bold text-slate-700">{c.name}</div>
-                            </div>
-                            <div className="text-orange-600 font-mono font-bold">{formatRupiah(c.balance)}</div>
-                        </div>
-                    ))}
+                <div className="bg-red-100 text-red-700 px-4 py-2 rounded-xl font-bold border border-red-200 shadow-sm">
+                    Total: {formatRupiah(totalHutang)}
                 </div>
             </div>
 
-            {/* DETAIL & FORM BAYAR (KANAN) */}
-            {selectedCustomer ? (
-                <div className="flex-[2] flex flex-col h-full overflow-hidden">
-                    {/* Header Card */}
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6 shrink-0">
-                        <div className="flex justify-between items-start mb-6">
-                            <div>
-                                <h2 className="text-2xl font-bold text-slate-800">{selectedCustomer.name}</h2>
-                                <p className="text-slate-500 text-sm">Total Sisa Hutang</p>
-                            </div>
-                            <button onClick={() => setSelectedCustomer(null)} className="md:hidden text-slate-400">Tutup</button>
-                            <div className="text-4xl font-black text-orange-600">{formatRupiah(selectedCustomer.balance)}</div>
-                        </div>
-                        
-                        {/* Form Bayar */}
-                        {selectedCustomer.balance > 0 ? (
-                            <form onSubmit={handlePay} className="flex gap-2">
-                                <div className="flex-1 relative">
-                                    <span className="absolute left-3 top-3 text-slate-400 font-bold">Rp</span>
-                                    <input 
-                                        type="number" 
-                                        value={payAmount} 
-                                        onChange={e => setPayAmount(e.target.value)} 
-                                        className="w-full border p-2 pl-10 rounded-lg outline-none focus:border-green-500 font-bold text-lg" 
-                                        placeholder="Jumlah bayar..." 
-                                        required 
-                                        autoFocus
-                                    />
-                                </div>
-                                <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 flex items-center gap-2 shadow-lg shadow-green-200">
-                                    <Wallet size={18}/> Bayar
-                                </button>
-                            </form>
-                        ) : (
-                            <div className="bg-green-100 text-green-700 p-3 rounded-lg font-bold text-center">
-                                LUNAS! Tidak ada tanggungan.
-                            </div>
-                        )}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col flex-1 overflow-hidden">
+                <div className="p-4 border-b border-slate-100">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-3 text-slate-400" size={18}/>
+                        <input value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 focus:border-blue-500 outline-none" placeholder="Cari nama pelanggan..." />
                     </div>
+                </div>
 
-                    {/* Riwayat Mutasi */}
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 overflow-hidden flex flex-col">
-                        <div className="p-4 border-b bg-slate-50 font-bold text-slate-700 flex items-center gap-2">
-                            <History size={18}/> Riwayat Mutasi
-                        </div>
-                        <div className="overflow-y-auto flex-1 p-4 space-y-2">
-                            {customerHistory.map(h => (
-                                <div key={h.id} className="flex justify-between items-center border-b border-dashed pb-3 last:border-0">
-                                    <div className="flex items-center gap-3">
-                                        <div className={`p-2 rounded-full ${h.type === 'borrow' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                                            {h.type === 'borrow' ? <Wallet size={16}/> : <Wallet size={16}/>}
-                                        </div>
-                                        <div>
-                                            <div className={`font-bold text-sm ${h.type === 'borrow' ? 'text-red-600' : 'text-green-600'}`}>
-                                                {h.type === 'borrow' ? 'Tambah Hutang (Kasbon)' : 'Pembayaran Cicilan'}
-                                            </div>
-                                            <div className="text-xs text-slate-400">{new Date(h.date).toLocaleString('id-ID')}</div>
-                                        </div>
-                                    </div>
-                                    <div className={`font-mono font-bold ${h.type === 'borrow' ? 'text-red-600' : 'text-green-600'}`}>
-                                        {h.type === 'borrow' ? '+' : '-'}{formatRupiah(h.amount)}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                <div className="flex-1 overflow-y-auto">
+                    {loading ? <div className="p-10 text-center text-slate-400">Memuat data Cloud...</div> : (
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs sticky top-0">
+                                <tr><th className="px-6 py-4">Tanggal</th><th className="px-6 py-4">Pelanggan</th><th className="px-6 py-4">Sisa Hutang</th><th className="px-6 py-4 text-center">Aksi</th></tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {filtered.map(d => (
+                                    <tr key={d.id} className="hover:bg-blue-50 transition-colors">
+                                        <td className="px-6 py-4 text-slate-500 flex items-center gap-2">
+                                            <Clock size={14}/> {new Date(d.date).toLocaleDateString('id-ID')}
+                                        </td>
+                                        <td className="px-6 py-4 font-bold text-slate-700">{d.customerName || 'Tanpa Nama'}</td>
+                                        <td className="px-6 py-4 font-bold text-red-600">{formatRupiah(d.amount)}</td>
+                                        <td className="px-6 py-4 text-center">
+                                            <button onClick={() => handlePay(d)} className="bg-green-100 text-green-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-200 border border-green-200 flex items-center gap-1 mx-auto">
+                                                <CheckCircle size={12}/> Bayar / Lunas
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                    {!loading && filtered.length === 0 && <div className="p-8 text-center text-slate-400">Tidak ada data hutang.</div>}
                 </div>
-            ) : (
-                // Placeholder Kanan jika belum pilih customer
-                <div className="flex-[2] hidden md:flex items-center justify-center bg-slate-200/50 rounded-xl border-2 border-dashed border-slate-300 text-slate-400 font-bold">
-                    Pilih pelanggan di sebelah kiri
-                </div>
-            )}
+            </div>
         </div>
     );
 };

@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { 
     LayoutDashboard, ShoppingCart, Package, History, Store, Wallet, 
     FileText, BookUser, Settings, QrCode, CreditCard, Banknote, 
-    Users, LogOut, Lock, Bluetooth, FileBarChart, AlertCircle, Percent, BadgePercent 
+    Users, LogOut, Lock, Bluetooth, FileBarChart, AlertCircle, Percent, BadgePercent,
+    Wifi, WifiOff
 } from 'lucide-react';
-import { db } from './db';
+// IMPORT FIREBASE
+import { db, collection, addDoc, updateDoc, doc, getDocs } from './firebase';
 import { formatRupiah, printReceipt, printBluetooth } from './utils';
 
 // Import Semua Halaman
@@ -25,9 +27,13 @@ function App() {
     const [cart, setCart] = useState([]); 
     const [selectedCustomer, setSelectedCustomer] = useState(null);
 
+    // --- STATE UPDATE STOK REALTIME ---
+    const [lastSuccessItems, setLastSuccessItems] = useState([]); // <--- INI OBATNYA
+
     // --- STATE PEMBAYARAN ---
     const [payModal, setPayModal] = useState(false);
     const [payAmount, setPayAmount] = useState('');
+    const [isProcessing, setIsProcessing] = useState(false); 
     
     // --- STATE DISKON ---
     const [discountMode, setDiscountMode] = useState('rp'); 
@@ -41,14 +47,34 @@ function App() {
     // --- STATE SYSTEM ---
     const [loading, setLoading] = useState(false);
     const [toast, setToast] = useState(null);
+    const [isOnline, setIsOnline] = useState(navigator.onLine); 
+
+    useEffect(() => {
+        const handleOnline = () => { setIsOnline(true); showToast('Internet Terhubung (Online Mode)', 'success'); };
+        const handleOffline = () => { setIsOnline(false); showToast('Internet Putus (Offline Mode)', 'error'); };
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
 
     useEffect(() => {
         const loadConfig = async () => {
-            const q = await db.settings.get('qrisImage');
-            const b = await db.settings.get('bankAccount');
-            setPaymentConfig({ qris: q?.value || '', bank: b?.value || '' });
+            if (currentUser) {
+                try {
+                    const settingsRef = collection(db, 'settings');
+                    const snapshot = await getDocs(settingsRef);
+                    const settingsMap = {};
+                    snapshot.forEach(doc => {
+                        settingsMap[doc.id] = doc.data().value;
+                    });
+                    setPaymentConfig({ qris: settingsMap['qrisImage'] || '', bank: settingsMap['bankAccount'] || '' });
+                } catch (e) {}
+            }
         };
-        if (currentUser) loadConfig();
+        loadConfig();
     }, [currentUser]);
 
     useEffect(() => {
@@ -67,7 +93,7 @@ function App() {
             }
             if (e.key === 'Escape') {
                 e.preventDefault();
-                if (payModal) setPayModal(false);
+                if (payModal && !isProcessing) setPayModal(false); 
                 if (successTx) setSuccessTx(null);
             }
             if (e.key === 'Enter' && successTx) {
@@ -77,7 +103,7 @@ function App() {
         };
         window.addEventListener('keydown', handleGlobalKeyDown);
         return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-    }, [view, cart, payModal, successTx, currentUser]);
+    }, [view, cart, payModal, successTx, currentUser, isProcessing]);
 
     const showToast = (message, type = 'success') => {
         setToast({ message, type });
@@ -94,6 +120,8 @@ function App() {
     };
 
     const handleCheckout = async () => {
+        if (isProcessing) return; 
+        
         const discountVal = calculateDiscountValue(); 
         const paymentVal = parseInt(payAmount) || 0; 
         const finalTotal = subtotalForPay - discountVal;
@@ -101,12 +129,14 @@ function App() {
         if (paymentMethod === 'cash' && paymentVal < finalTotal) return showToast('Uang kurang!', 'error');
         if (paymentMethod === 'debt' && !selectedCustomer) return showToast('Pilih Pelanggan dulu untuk Hutang!', 'error');
         
-        const storeName = (await db.settings.get('storeName'))?.value || 'RUKO POS';
+        setIsProcessing(true);
+
+        const storeName = 'RUKO POS'; 
         const customerName = selectedCustomer ? selectedCustomer.name : 'Umum';
 
         let totalCost = 0;
         const itemsWithCost = cart.map(item => {
-            const baseCost = parseInt(item.original_product?.cost_price) || 0; // Force Integer
+            const baseCost = parseInt(item.original_product?.cost_price) || 0;
             const conversion = parseInt(item.conversion) || 1; 
             const totalItemCost = baseCost * item.qty * conversion;
             totalCost += totalItemCost;
@@ -126,47 +156,69 @@ function App() {
             type: paymentMethod, 
             customerName: customerName,
             customerId: selectedCustomer ? selectedCustomer.id : null,
-            synced: 0,
-            cashier: currentUser.username 
+            cashier: currentUser.username,
+            synced: isOnline 
         };
 
-        await db.transactions.add(tx);
-
-        if (paymentMethod === 'debt') {
-            await db.debts.add({
+        const saveToFirebase = async () => {
+            const txPromise = addDoc(collection(db, 'transactions'), tx);
+            const debtPromise = paymentMethod === 'debt' ? addDoc(collection(db, 'debts'), {
                 customerId: selectedCustomer.id,
+                customerName: selectedCustomer.name,
                 date: new Date().toISOString(),
                 amount: finalTotal, 
-                type: 'borrow',
-                synced: 0
-            });
-        }
-        
-        // --- LOGIKA PENGAMAN STOK (YANG DIPERBAIKI) ---
-        for (let item of cart) {
-            const product = await db.products.get(item.id);
-            if (product) {
-                // 1. Pastikan stok saat ini dibaca sebagai Angka (Integer)
-                const currentStock = parseInt(product.stock) || 0; 
-                
-                // 2. Pastikan jumlah yang dikurang adalah Angka
-                const qtyToDeduct = parseInt(item.qty) * (parseInt(item.conversion) || 1);
-                
-                // 3. Lakukan pengurangan matematika murni
-                const newStock = currentStock - qtyToDeduct;
+                type: 'borrow'
+            }) : Promise.resolve();
 
-                // 4. Update ke database
-                await db.products.update(item.id, { stock: newStock });
+            const stockPromises = cart.map(item => {
+                if (item.id && item.original_product?.id) {
+                    const productId = item.original_product.id;
+                    const productRef = doc(db, 'products', productId);
+                    const currentStock = parseInt(item.original_product.stock) || 0; 
+                    const qtyToDeduct = parseInt(item.qty) * (parseInt(item.conversion) || 1);
+                    return updateDoc(productRef, { stock: currentStock - qtyToDeduct });
+                }
+                return Promise.resolve();
+            });
+
+            await Promise.all([txPromise, debtPromise, ...stockPromises]);
+        };
+
+        try {
+            if (!isOnline) {
+                saveToFirebase().catch(e => console.log("Background Queue:", e));
+                finishTransaction(tx, 'Transaksi Offline Berhasil');
+            } else {
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 3000));
+                try {
+                    await Promise.race([saveToFirebase(), timeoutPromise]);
+                    finishTransaction(tx, 'Transaksi Berhasil (Cloud)');
+                } catch (error) {
+                    if (error.message === 'TIMEOUT') {
+                        finishTransaction(tx, 'Koneksi Lambat - Masuk Antrian');
+                    } else { throw error; }
+                }
             }
+        } catch (error) {
+            console.error("Critical Error:", error);
+            showToast('Gagal: ' + error.message, 'error');
+            setIsProcessing(false);
         }
+    };
+
+    const finishTransaction = (txData, msg) => {
+        // --- UPDATE UI POSVIEW SECARA PAKSA ---
+        setLastSuccessItems([...cart]); // Copy keranjang yang berhasil dijual
+        // --------------------------------------
 
         setCart([]);
         setPayModal(false);
         setPayAmount('');
         setDiscountInput('');
         setSelectedCustomer(null);
-        setSuccessTx(tx);
-        showToast('Transaksi Berhasil!');
+        setSuccessTx(txData);
+        showToast(msg);
+        setIsProcessing(false); 
     };
 
     const selectMethod = (method) => {
@@ -191,32 +243,19 @@ function App() {
     }, [discountInput, discountMode, subtotalForPay, paymentMethod, payModal]);
 
     const syncPushSmart = async () => {
-        const urlItem = await db.settings.get('apiUrl');
-        if (!urlItem || !urlItem.value) return showToast('URL App Script belum diatur!', 'error');
-        if (!confirm('Sinkronisasi Data? Pastikan internet lancar.')) return;
+        const urlItem = paymentConfig.apiUrl; 
+        if (!urlItem) return showToast('URL App Script belum diatur!', 'error');
+        if (!confirm('Backup ke Google Sheet?')) return;
         setLoading(true);
         try {
-            const allProducts = await db.products.toArray();
-            const unsyncedTx = await db.transactions.where('synced').equals(0).toArray();
-            
-            const productsPayload = allProducts.map(p => ({ ...p, multi_units: p.multi_units || [] }));
-            
-            const payload = JSON.stringify({ 
-                action: 'overwrite_full', 
-                products: productsPayload, 
-                transactions: unsyncedTx, 
-                expenses: [] 
-            });
-            const response = await fetch(urlItem.value, { method: 'POST', body: payload });
-            const result = await response.json();
-            if (result.status === 'success') {
-                if(unsyncedTx.length > 0) {
-                    const ids = unsyncedTx.map(t => t.id);
-                    await db.transactions.where('id').anyOf(ids).modify({ synced: 1 });
-                }
-                showToast('Sukses! Data tersinkronisasi.');
-            } else { throw new Error(result.message); }
-        } catch (error) { showToast('Gagal Sync: ' + error.message, 'error'); } finally { setLoading(false); }
+            const prodsSnap = await getDocs(collection(db, 'products'));
+            const txSnap = await getDocs(collection(db, 'transactions'));
+            const allProducts = prodsSnap.docs.map(d => d.data());
+            const allTx = txSnap.docs.map(d => d.data());
+            const payload = JSON.stringify({ action: 'overwrite_full', products: allProducts, transactions: allTx, expenses: [] });
+            await fetch(urlItem, { method: 'POST', body: payload });
+            showToast('Backup ke Sheet Sukses!');
+        } catch (error) { showToast('Gagal Backup: ' + error.message, 'error'); } finally { setLoading(false); }
     };
 
     const handleLogout = () => { if (confirm('Yakin ingin keluar?')) { setCurrentUser(null); setView('pos'); } };
@@ -245,6 +284,10 @@ function App() {
                         <Store className="md:mr-3 shrink-0" />
                         <span className="hidden md:inline">RUKO POS v6</span>
                     </div>
+                    <div className={`text-[10px] text-center py-2 font-black tracking-wide ${isOnline ? 'bg-green-600 text-green-100' : 'bg-red-600 text-red-100 animate-pulse'}`}>
+                        {isOnline ? <span className="flex items-center justify-center gap-1"><Wifi size={12}/> ONLINE MODE</span> : <span className="flex items-center justify-center gap-1"><WifiOff size={12}/> OFFLINE MODE</span>}
+                    </div>
+
                     <div className="hidden md:flex flex-col px-6 py-4 border-b border-slate-800 mb-2">
                         <span className="text-xs text-slate-400 uppercase font-bold">Halo,</span>
                         <span className="text-sm font-bold text-white truncate">{currentUser.username}</span>
@@ -279,6 +322,7 @@ function App() {
                         activeUser={currentUser} 
                         selectedCustomer={selectedCustomer}
                         setSelectedCustomer={setSelectedCustomer}
+                        lastSuccessItems={lastSuccessItems} // <--- KIRIM SINYAL KE KASIR
                     />
                 )}
                 {view === 'dashboard' && currentUser.role === 'admin' && <DashboardView />}
@@ -299,25 +343,24 @@ function App() {
                 )}
             </main>
 
-            {/* MODAL BAYAR */}
             {payModal && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden anim-scale relative flex flex-col md:flex-row h-[500px] md:h-auto">
-                        <button onClick={() => setPayModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-red-400 z-10"><X className="w-6 h-6"/></button>
+                        <button onClick={() => !isProcessing && setPayModal(false)} disabled={isProcessing} className="absolute top-4 right-4 text-slate-400 hover:text-red-400 z-10 disabled:opacity-0"><X className="w-6 h-6"/></button>
 
                         <div className="w-full md:w-1/3 bg-slate-50 p-4 border-r border-slate-200">
                             <h3 className="font-bold text-slate-700 mb-4">Pilih Metode</h3>
                             <div className="space-y-2">
-                                <button onClick={() => selectMethod('cash')} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'cash' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-blue-50 border'}`}>
+                                <button onClick={() => !isProcessing && selectMethod('cash')} disabled={isProcessing} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'cash' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-blue-50 border'}`}>
                                     <Banknote size={20}/> TUNAI (Cash)
                                 </button>
-                                <button onClick={() => selectMethod('qris')} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'qris' ? 'bg-purple-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-purple-50 border'}`}>
+                                <button onClick={() => !isProcessing && selectMethod('qris')} disabled={isProcessing} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'qris' ? 'bg-purple-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-purple-50 border'}`}>
                                     <QrCode size={20}/> QRIS Scan
                                 </button>
-                                <button onClick={() => selectMethod('transfer')} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'transfer' ? 'bg-orange-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-orange-50 border'}`}>
+                                <button onClick={() => !isProcessing && selectMethod('transfer')} disabled={isProcessing} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'transfer' ? 'bg-orange-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-orange-50 border'}`}>
                                     <CreditCard size={20}/> TRANSFER BANK
                                 </button>
-                                <button onClick={() => selectMethod('debt')} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'debt' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-red-50 border'}`}>
+                                <button onClick={() => !isProcessing && selectMethod('debt')} disabled={isProcessing} className={`w-full p-3 rounded-lg flex items-center gap-3 font-bold transition-all ${paymentMethod === 'debt' ? 'bg-red-600 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-red-50 border'}`}>
                                     <BookUser size={20}/> KASBON (Hutang)
                                 </button>
                             </div>
@@ -333,7 +376,7 @@ function App() {
                                 </div>
                                 <div className="flex items-center gap-2 mb-2">
                                     {discountMode === 'percent' ? <BadgePercent size={14} className="text-orange-500"/> : <Banknote size={14} className="text-blue-500"/>}
-                                    <input type="number" value={discountInput} onChange={e => setDiscountInput(e.target.value)} className={`w-full border-b border-slate-300 text-right text-sm font-bold outline-none bg-transparent placeholder:text-slate-300 placeholder:font-normal ${discountMode === 'percent' ? 'text-orange-500 focus:border-orange-500' : 'text-blue-500 focus:border-blue-500'}`} placeholder={discountMode === 'percent' ? "Contoh: 10 (Artinya 10%)" : "Contoh: 5000"}/>
+                                    <input type="number" value={discountInput} onChange={e => setDiscountInput(e.target.value)} disabled={isProcessing} className={`w-full border-b border-slate-300 text-right text-sm font-bold outline-none bg-transparent placeholder:text-slate-300 placeholder:font-normal ${discountMode === 'percent' ? 'text-orange-500 focus:border-orange-500' : 'text-blue-500 focus:border-blue-500'}`} placeholder={discountMode === 'percent' ? "Contoh: 10 (Artinya 10%)" : "Contoh: 5000"}/>
                                 </div>
                                 {discountMode === 'percent' && discountInput > 0 && <div className="text-right text-[10px] text-slate-400 italic mb-2">Potongan: - {formatRupiah(finalDiscountRp)}</div>}
                                 <div className="border-t border-dashed my-2"></div>
@@ -347,22 +390,21 @@ function App() {
                                 {paymentMethod === 'cash' && (
                                     <div className="space-y-4">
                                         <h3 className="font-bold text-lg text-slate-700">Pembayaran Tunai</h3>
-                                        <div><label className="text-xs font-bold text-slate-500 uppercase">Bayar (Rp)</label><input autoFocus type="number" value={payAmount} onChange={e => setPayAmount(e.target.value)} className="w-full p-3 border-2 border-blue-500 rounded-lg text-xl font-bold text-right focus:outline-none" placeholder="0" onKeyDown={e => e.key === 'Enter' && handleCheckout()}/></div>
-                                        <div className="grid grid-cols-4 gap-2">{[10000, 20000, 50000, 100000].map(m => ( <button key={m} onClick={() => setPayAmount(m)} className="bg-slate-100 py-2 rounded font-bold text-slate-600 hover:bg-blue-100">{m/1000}k</button> ))}</div>
+                                        <div><label className="text-xs font-bold text-slate-500 uppercase">Bayar (Rp)</label><input autoFocus type="number" value={payAmount} onChange={e => setPayAmount(e.target.value)} disabled={isProcessing} className="w-full p-3 border-2 border-blue-500 rounded-lg text-xl font-bold text-right focus:outline-none disabled:bg-slate-100 disabled:text-slate-400" placeholder="0" onKeyDown={e => e.key === 'Enter' && handleCheckout()}/></div>
+                                        <div className="grid grid-cols-4 gap-2">{[10000, 20000, 50000, 100000].map(m => ( <button key={m} onClick={() => setPayAmount(m)} disabled={isProcessing} className="bg-slate-100 py-2 rounded font-bold text-slate-600 hover:bg-blue-100 disabled:opacity-50">{m/1000}k</button> ))}</div>
                                     </div>
                                 )}
                                 {paymentMethod === 'qris' && (
-                                    <div className="text-center h-full flex flex-col items-center justify-center"><h3 className="font-bold text-lg text-purple-700 mb-2">Scan QRIS</h3>{paymentConfig.qris ? (<img src={paymentConfig.qris} className="w-48 h-48 object-contain border rounded-lg shadow-sm mb-4" alt="QRIS"/>) : (<div className="w-48 h-48 bg-slate-100 rounded flex items-center justify-center text-slate-400 text-xs mb-4">Belum ada QRIS di Setting</div>)}</div>
+                                    <div className="text-center h-full flex flex-col items-center justify-center"><h3 className="font-bold text-lg text-purple-700 mb-2">Scan QRIS</h3>{paymentConfig.qris ? (<img src={paymentConfig.qris} className="w-48 h-48 object-contain border rounded-lg shadow-sm mb-4" alt="QRIS"/>) : (<div className="w-48 h-48 bg-slate-100 rounded flex items-center justify-center text-slate-400 text-xs mb-4">Belum ada QRIS di Setting (Cloud)</div>)}</div>
                                 )}
                                 {paymentMethod === 'transfer' && (
-                                    <div className="text-center h-full flex flex-col items-center justify-center"><h3 className="font-bold text-lg text-orange-700 mb-4">Transfer Bank</h3><div className="bg-orange-50 p-6 rounded-xl border border-orange-100 w-full mb-4"><pre className="text-slate-700 font-bold font-mono whitespace-pre-wrap">{paymentConfig.bank || "Belum ada Info Bank di Setting"}</pre></div></div>
+                                    <div className="text-center h-full flex flex-col items-center justify-center"><h3 className="font-bold text-lg text-orange-700 mb-4">Transfer Bank</h3><div className="bg-orange-50 p-6 rounded-xl border border-orange-100 w-full mb-4"><pre className="text-slate-700 font-bold font-mono whitespace-pre-wrap">{paymentConfig.bank || "Belum ada Info Bank di Setting (Cloud)"}</pre></div></div>
                                 )}
                                 {paymentMethod === 'debt' && (
-                                    <div className="text-center h-full flex flex-col items-center justify-center"><h3 className="font-bold text-lg text-red-700 mb-2">Pencatatan Hutang</h3>{selectedCustomer ? (<div className="bg-red-50 p-4 rounded-xl border border-red-100 w-full mb-4"><p className="text-xs text-slate-500 mb-1">Hutang Atas Nama:</p><h2 className="text-xl font-bold text-slate-800">{selectedCustomer.name}</h2><p className="text-xs text-slate-400 mt-2">Hutang akan ditambahkan ke saldo pelanggan.</p></div>) : (<div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 w-full mb-4 flex flex-col items-center gap-2"><AlertCircle className="text-yellow-600"/><p className="text-sm font-bold text-yellow-700">Pelanggan Belum Dipilih!</p><p className="text-xs text-yellow-600">Tutup modal ini, lalu pilih pelanggan di atas keranjang.</p></div>)}</div>
+                                    <div className="text-center h-full flex flex-col items-center justify-center"><h3 className="font-bold text-lg text-red-700 mb-2">Pencatatan Hutang</h3>{selectedCustomer ? (<div className="bg-red-50 p-4 rounded-xl border border-red-100 w-full mb-4"><p className="text-xs text-slate-500 mb-1">Hutang Atas Nama:</p><h2 className="text-xl font-bold text-slate-800">{selectedCustomer.name}</h2><p className="text-xs text-slate-400 mt-2">Hutang akan disimpan di Cloud.</p></div>) : (<div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200 w-full mb-4 flex flex-col items-center gap-2"><AlertCircle className="text-yellow-600"/><p className="text-sm font-bold text-yellow-700">Pelanggan Belum Dipilih!</p><p className="text-xs text-yellow-600">Tutup modal ini, lalu pilih pelanggan di atas keranjang.</p></div>)}</div>
                                 )}
                             </div>
-
-                            <button onClick={handleCheckout} disabled={paymentMethod === 'debt' && !selectedCustomer} className={`w-full text-white py-4 rounded-xl font-bold text-lg shadow-lg mt-4 disabled:bg-slate-300 disabled:cursor-not-allowed ${paymentMethod === 'cash' ? 'bg-blue-600 hover:bg-blue-700' : paymentMethod === 'qris' ? 'bg-purple-600 hover:bg-purple-700' : paymentMethod === 'debt' ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}`}>{paymentMethod === 'cash' ? 'BAYAR SEKARANG' : paymentMethod === 'debt' ? 'SIMPAN HUTANG' : 'KONFIRMASI SUDAH DIBAYAR'} (Enter)</button>
+                            <button onClick={handleCheckout} disabled={(paymentMethod === 'debt' && !selectedCustomer) || isProcessing} className={`w-full text-white py-4 rounded-xl font-bold text-lg shadow-lg mt-4 flex items-center justify-center gap-2 transition-all ${isProcessing ? 'bg-slate-400 cursor-not-allowed' : paymentMethod === 'cash' ? 'bg-blue-600 hover:bg-blue-700' : paymentMethod === 'qris' ? 'bg-purple-600 hover:bg-purple-700' : paymentMethod === 'debt' ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}`}>{isProcessing ? (<><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"/><span>{isOnline ? 'MENYIMPAN...' : 'ANTRIAN OFFLINE...'}</span></>) : (<>{paymentMethod === 'cash' ? 'BAYAR SEKARANG' : paymentMethod === 'debt' ? 'SIMPAN HUTANG' : 'KONFIRMASI SUDAH DIBAYAR'} (Enter)</>)}</button>
                         </div>
                     </div>
                 </div>
@@ -378,12 +420,10 @@ function App() {
                     </div>
                 </div>
             )}
-            
             {toast && <div className={`fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-xl text-white font-medium z-[100] ${toast.type === 'error' ? 'bg-red-600' : 'bg-slate-800'}`}>{toast.message}</div>}
         </div>
     );
 }
 
 const X = ({ className }) => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>);
-
 export default App;
