@@ -10,23 +10,24 @@ import {
     setDoc,
     updateDoc,
     deleteDoc,
-    writeBatch, // <-- INI YANG TADI KURANG
+    writeBatch,
     doc,
     query,
     orderBy,
     where,
-    limit
+    limit,
+    increment // <--- TAMBAHAN BARU DISINI
 } from "firebase/firestore";
 
 // Config dari Bapak
 const firebaseConfig = {
-  apiKey: "AIzaSyBvJSkJbvumZpJW9ZejT4ukZpZ-wQUFi0E",
-  authDomain: "kasir-59ce2.firebaseapp.com",
-  projectId: "kasir-59ce2",
-  storageBucket: "kasir-59ce2.firebasestorage.app",
-  messagingSenderId: "269650143782",
-  appId: "1:269650143782:web:7d36e3ba7faa7fc01e14e7",
-  measurementId: "G-9H7CZVWXYB"
+  apiKey: "AIzaSyAiDhKZ2WtE92dRI9jMNo4j8d5wBSxP12w",
+  authDomain: "kasirakhsan.firebaseapp.com",
+  projectId: "kasirakhsan",
+  storageBucket: "kasirakhsan.firebasestorage.app",
+  messagingSenderId: "617046173731",
+  appId: "1:617046173731:web:0b25749e02aa4fe6bc2996",
+  measurementId: "G-WSVV2K450P"
 };
 
 // 1. Initialize Firebase
@@ -59,10 +60,11 @@ export {
     setDoc, 
     updateDoc, 
     deleteDoc, 
-    writeBatch, // <-- Export agar SettingsView bisa pakai
+    writeBatch,
     doc, 
     query, 
     orderBy, 
     where,
-    limit
+    limit,
+    increment // <--- JANGAN LUPA EXPORT DISINI JUGA
 };

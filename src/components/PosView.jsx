@@ -204,7 +204,16 @@ const PosView = ({ cart, setCart, onProcessPayment, syncPushSmart, loadingSync, 
                             <div className="text-slate-400">Kasir</div>
                             <div className="font-bold text-slate-800">{activeUser?.username || 'Owner'}</div>
                         </div>
-                        <button onClick={() => syncPushSmart()} disabled={loadingSync} className={`p-2 rounded-full ${loadingSync ? 'bg-slate-200' : 'bg-green-100 text-green-600 hover:bg-green-200'}`}><RefreshCw size={18} className={loadingSync ? 'animate-spin' : ''}/></button>
+                       <button 
+    onClick={() => { 
+        loadData(); // <--- INI KUNCINYA (Tarik ulang data stok terbaru)
+         syncPushSmart(); // (Opsional: Kalau mau backup sekalian, boleh dinyalakan)
+    }} 
+    title="Refresh Stok Terbaru"
+    className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200"
+>
+    <RefreshCw size={18} />
+</button>
                     </div>
                 </div>
                 <div className="px-4 py-3 bg-white border-b border-slate-100">

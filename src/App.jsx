@@ -6,7 +6,7 @@ import {
     Wifi, WifiOff
 } from 'lucide-react';
 // IMPORT FIREBASE
-import { db, collection, addDoc, updateDoc, doc, getDocs } from './firebase';
+import { db, collection, addDoc, updateDoc, doc, getDocs, increment } from './firebase';
 import { formatRupiah, printReceipt, printBluetooth } from './utils';
 
 // Import Semua Halaman
@@ -170,13 +170,21 @@ function App() {
                 type: 'borrow'
             }) : Promise.resolve();
 
+ // KODE BARU (LEBIH AMAN):
             const stockPromises = cart.map(item => {
-                if (item.id && item.original_product?.id) {
+                // Pastikan item punya ID produk asli
+                if (item.original_product?.id) { 
                     const productId = item.original_product.id;
                     const productRef = doc(db, 'products', productId);
-                    const currentStock = parseInt(item.original_product.stock) || 0; 
+                    
+                    // Hitung total qty yang mau dikurangi (Qty Beli x Konversi Satuan)
                     const qtyToDeduct = parseInt(item.qty) * (parseInt(item.conversion) || 1);
-                    return updateDoc(productRef, { stock: currentStock - qtyToDeduct });
+
+                    // PENTING: Gunakan increment(-angka) untuk mengurangi
+                    // Kita pakai minus (-) karena mau mengurangi stok
+                    return updateDoc(productRef, { 
+                        stock: increment(-qtyToDeduct) 
+                    });
                 }
                 return Promise.resolve();
             });

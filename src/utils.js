@@ -11,11 +11,12 @@ export const formatRupiah = (number) => {
     }).format(number);
 };
 
-// --- 2. GENERATE BARCODE ---
+// --- 2. GENERATE BARCODE (DATA URL) ---
 export const generateBarcode = (barcode) => {
     try {
         const canvas = document.createElement("canvas");
-        JsBarcode(canvas, barcode, { format: "CODE128", displayValue: true, height: 40, fontSize: 14 });
+        // Width 2 agar hasil scan lebih tajam
+        JsBarcode(canvas, barcode, { format: "CODE128", displayValue: true, width: 2, height: 50, fontSize: 14 });
         return canvas.toDataURL("image/png");
     } catch (e) {
         console.error("Barcode Error:", e);
@@ -23,7 +24,51 @@ export const generateBarcode = (barcode) => {
     }
 };
 
-// --- 3. CETAK STRUK BROWSER (PC) - VERSI PINTAR ---
+// --- 3. CETAK LABEL BARCODE (FITUR ULTIMATE 58MM) ---
+// Fitur baru untuk menempel harga di rak / barang
+export const printLabel58mm = (productName, price, barcodeImgUrl, barcodeString) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+    
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    
+    // CSS KHUSUS 58MM AGAR FULL & RAPI
+    // Ukuran kertas diset 50mm x 40mm (Ukuran label standard)
+    doc.write(`
+        <html>
+        <head>
+            <style>
+                @page { size: 50mm 40mm; margin: 0; } 
+                body { 
+                    font-family: 'Arial', sans-serif; 
+                    width: 48mm; 
+                    margin: 0 auto; 
+                    padding: 2mm 0;
+                    text-align: center;
+                }
+                .name { font-size: 12px; font-weight: bold; line-height: 1.1; margin-bottom: 2px; text-transform: uppercase; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                .price { font-size: 16px; font-weight: 900; margin-bottom: 2px; }
+                img { width: 90%; height: auto; display: block; margin: 0 auto; }
+                .code { font-size: 10px; font-family: monospace; }
+            </style>
+        </head>
+        <body>
+            <div class="name">${productName}</div>
+            <div class="price">${formatRupiah(price)}</div>
+            <img src="${barcodeImgUrl}" />
+        </body>
+        </html>
+    `);
+    doc.close();
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    // Hapus iframe setelah 3 detik
+    setTimeout(() => { if(document.body.contains(iframe)) document.body.removeChild(iframe); }, 3000);
+};
+
+// --- 4. CETAK STRUK KASIR (PC/BROWSER) - KHUSUS 58MM ---
 export const printReceipt = (tx) => {
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
@@ -43,42 +88,38 @@ export const printReceipt = (tx) => {
         <html>
         <head>
             <style>
+                @page { margin: 0; }
                 body { 
                     font-family: 'Arial', sans-serif; 
-                    font-size: 14px; 
+                    font-size: 11px; 
                     font-weight: bold; 
-                    width: 58mm; 
-                    margin: 0; 
+                    width: 48mm; 
+                    margin: 0 auto; 
                     padding: 5px 0; 
                     color: #000;
                     line-height: 1.2;
                 }
                 .text-center { text-align: center; }
-                .text-right { text-align: right; }
-                .line { border-bottom: 2px dashed #000; margin: 8px 0; }
                 .flex { display: flex; justify-content: space-between; align-items: flex-start; }
-                .item-name { margin-bottom: 2px; }
-                .title { font-size: 18px; font-weight: 900; }
-                .total { font-size: 20px; font-weight: 900; } /* Total Sangat Besar */
-                .sm { font-size: 11px; }
+                .line { border-bottom: 1px dashed #000; margin: 5px 0; }
+                .title { font-size: 14px; font-weight: 900; }
+                .total { font-size: 16px; font-weight: 900; }
+                .sm { font-size: 10px; }
             </style>
         </head>
         <body>
             <div class="text-center title">RESKI JAYA</div>
             <div class="text-center sm">${new Date(tx.date).toLocaleString('id-ID')}</div>
-            ${tx.customerName ? `<div class="text-center" style="margin-top:5px; font-size:14px;">${tx.customerName}</div>` : ''}
+            ${tx.customerName ? `<div class="text-center" style="margin-top:2px;">${tx.customerName}</div>` : ''}
             
             <div class="line"></div>
             
             ${tx.items.map(item => `
-                <div class="item-name">
-                    ${item.name} (${item.unit || 'Pcs'}) 
-                </div>
+                <div style="margin-bottom:2px;">${item.name} (${item.unit || 'Pcs'})</div>
                 <div class="flex">
                     <span>${item.qty} x ${fmt(item.price).replace('Rp','')}</span>
                     <span>${fmt(item.price * item.qty).replace('Rp','')}</span>
                 </div>
-                <div style="margin-bottom: 5px;"></div>
             `).join('')}
             
             <div class="line"></div>
@@ -99,7 +140,6 @@ export const printReceipt = (tx) => {
                 <div class="flex"><span>Kembali</span><span>${fmt(tx.change)}</span></div>
             ` : ''}
             
-            <div class="line"></div>
             <div class="text-center" style="margin-top:10px;">Terima Kasih</div>
         </body>
         </html>
@@ -107,10 +147,10 @@ export const printReceipt = (tx) => {
     doc.close();
     iframe.contentWindow.focus();
     iframe.contentWindow.print();
-    setTimeout(() => document.body.removeChild(iframe), 1000);
+    setTimeout(() => { if(document.body.contains(iframe)) document.body.removeChild(iframe); }, 3000);
 };
 
-// --- 4. CETAK BLUETOOTH (RawBT) - VERSI PINTAR ---
+// --- 5. CETAK BLUETOOTH (RawBT) - BERSIH & AMAN ---
 export const printBluetooth = (tx) => {
     const storeName = "RESKI JAYA"; 
     const date = new Date(tx.date).toLocaleString('id-ID');
@@ -121,9 +161,7 @@ export const printBluetooth = (tx) => {
     text += `[C][b][h]${storeName}[/h][/b]\n`;
     text += `[C][b]${date}[/b]\n`;
     
-    if (tx.customerName) {
-        text += `[C][b]Pelanggan: ${tx.customerName}[/b]\n`;
-    }
+    if (tx.customerName) text += `[C][b]Pelanggan: ${tx.customerName}[/b]\n`;
     
     text += `[L]--------------------------------\n`;
 
@@ -136,14 +174,12 @@ export const printBluetooth = (tx) => {
 
     text += `[L]--------------------------------\n`;
 
-    // LOGIKA PINTAR BLUETOOTH
     if (tx.discount > 0) {
         text += `[L][b]Subtotal[R]${fmt(tx.total)}[/b]\n`;
         text += `[L][b]Diskon[R]-${fmt(tx.discount)}[/b]\n`;
         text += `[L]--------------------------------\n`;
     }
     
-    // TOTAL AKHIR (Besar & Tebal)
     text += `[L][h][b]TOTAL[R]Rp ${fmt(tx.finalTotal)}[/b][/h]\n`;
     
     let method = 'TUNAI';
@@ -158,111 +194,16 @@ export const printBluetooth = (tx) => {
         text += `[L][b]Kembali[R]Rp ${fmt(tx.change)}[/b]\n`;
     }
 
-    text += `[L]\n`;
-    text += `[C][b]Terima Kasih[/b]\n`;
-    text += `[L]\n`;
+    text += `[L]\n[C][b]Terima Kasih[/b]\n[L]\n`;
 
     try {
-        const base64Data = btoa(text);
+        const base64Data = btoa(unescape(encodeURIComponent(text)));
         window.location.href = `rawbt:data:text/plain;charset=utf-8;base64,${base64Data}`;
-    } catch (e) { alert("Gagal print: " + e.message); }
+    } catch (e) { console.error(e); alert("Gagal print: " + e.message); }
 };
 
-// --- 5. EXPORT EXCEL (Database Backup) ---
-export const exportDatabase = async (db) => {
-    try {
-        const allData = {
-            products: await db.products.toArray(),
-            transactions: await db.transactions.toArray(),
-            customers: await db.customers.toArray(),
-            debts: await db.debts.toArray(),
-            expenses: await db.expenses.toArray(),
-            settings: await db.settings.toArray(),
-            users: await db.users.toArray(),
-            timestamp: new Date().toISOString()
-        };
-        const blob = new Blob([JSON.stringify(allData)], {type: "application/json"});
-        saveAs(blob, `RukoPOS_Backup_${new Date().toISOString().slice(0,10)}.json`);
-        return true;
-    } catch (e) { return false; }
-};
-
-export const importDatabase = async (db, file) => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (!data.products) throw new Error("Format salah!");
-                await db.transaction('rw', db.products, db.transactions, db.customers, db.debts, db.expenses, db.settings, db.users, async () => {
-                    await db.products.clear(); await db.products.bulkAdd(data.products);
-                    await db.transactions.clear(); await db.transactions.bulkAdd(data.transactions);
-                    if(data.customers) { await db.customers.clear(); await db.customers.bulkAdd(data.customers); }
-                    if(data.debts) { await db.debts.clear(); await db.debts.bulkAdd(data.debts); }
-                    if(data.expenses) { await db.expenses.clear(); await db.expenses.bulkAdd(data.expenses); }
-                    if(data.settings) { await db.settings.clear(); await db.settings.bulkAdd(data.settings); }
-                    if(data.users) { await db.users.clear(); await db.users.bulkAdd(data.users); }
-                });
-                resolve(true);
-            } catch (err) { reject(err); }
-        };
-        reader.readAsText(file);
-    });
-};
-
-// --- 6. EXPORT EXCEL LAMA (SettingsView) ---
-export const exportToExcel = async (db) => {
-    try {
-        const transactions = await db.transactions.toArray();
-        const expenses = await db.expenses.toArray();
-
-        const workbook = new ExcelJS.Workbook();
-        workbook.creator = 'RESKI JAYA';
-        workbook.created = new Date();
-
-        const sheetTx = workbook.addWorksheet('Laporan Penjualan');
-        sheetTx.columns = [
-            { header: 'No Ref', key: 'id', width: 10 },
-            { header: 'Tanggal', key: 'date', width: 15 },
-            { header: 'Pelanggan', key: 'cust', width: 20 },
-            { header: 'Metode', key: 'type', width: 12 },
-            { header: 'Total', key: 'total', width: 15 },
-            { header: 'Diskon', key: 'disc', width: 10 },
-            { header: 'Final', key: 'final', width: 15 },
-            { header: 'Modal', key: 'cost', width: 15 },
-            { header: 'Profit', key: 'profit', width: 15 },
-            { header: 'Items', key: 'items', width: 50 },
-        ];
-        sheetTx.getRow(1).font = { bold: true };
-        
-        transactions.forEach(t => {
-            let m = t.type === 'debt' ? 'Kasbon' : (t.type === 'qris' ? 'QRIS' : (t.type==='transfer'?'Transfer':'Tunai'));
-            sheetTx.addRow({
-                id: t.id, date: new Date(t.date).toLocaleDateString('id-ID'), cust: t.customerName, type: m,
-                total: t.total, disc: t.discount, final: t.finalTotal, cost: t.total_cost||0, profit: t.profit||0,
-                items: t.items.map(i=>`${i.name} (${i.qty})`).join(', ')
-            });
-        });
-
-        const sheetExp = workbook.addWorksheet('Laporan Pengeluaran');
-        sheetExp.columns = [
-            { header: 'Tanggal', key: 'date', width: 15 },
-            { header: 'Ket', key: 'desc', width: 40 },
-            { header: 'Jumlah', key: 'amount', width: 20 },
-        ];
-        sheetExp.getRow(1).font = { bold: true };
-        expenses.forEach(e => {
-            sheetExp.addRow({ date: new Date(e.date).toLocaleDateString('id-ID'), desc: e.desc, amount: e.amount });
-        });
-
-        const buffer = await workbook.xlsx.writeBuffer();
-        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        saveAs(blob, `Laporan_Lengkap_${new Date().toISOString().slice(0,10)}.xlsx`);
-        return true;
-    } catch (e) { alert("Gagal Export: " + e.message); return false; }
-};
-
-// --- 7. EXPORT EXCEL BARU (ReportsView) ---
+// --- 6. EXPORT EXCEL (Database Backup) ---
+// Fungsi ini digunakan di ReportsView untuk download laporan Excel
 export const generateExcelReport = async (sheetName, columns, data, fileName) => {
     try {
         const workbook = new ExcelJS.Workbook();

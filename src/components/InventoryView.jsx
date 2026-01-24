@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-// IMPORT DARI FIREBASE (BUKAN DB.JS LAGI)
+// IMPORT DARI FIREBASE
 import { db, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy } from '../firebase'; 
-import { generateBarcode } from '../utils';
+// IMPORT BARU: printLabel58mm
+import { generateBarcode, printLabel58mm } from '../utils';
 import { 
     Package, Plus, Search, Trash2, Edit, Save, X, 
-    ChevronDown, Check, Download 
+    ChevronDown, Check, Download, AlertTriangle, Printer 
 } from 'lucide-react';
 
-// --- KOMPONEN DROPDOWN KATEGORI (TETAP SAMA) ---
 const CategoryDropdown = ({ value, onChange, existingCategories }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [isCustom, setIsCustom] = useState(false);
@@ -63,7 +63,6 @@ const CategoryDropdown = ({ value, onChange, existingCategories }) => {
     );
 };
 
-// --- MAIN COMPONENT: INVENTORY VIEW (FIREBASE VERSION) ---
 const InventoryView = () => {
     const [products, setProducts] = useState([]);
     const [search, setSearch] = useState('');
@@ -88,19 +87,13 @@ const InventoryView = () => {
         }
     }, [formData.barcode]);
 
-    // --- LOGIKA LOAD DATA DARI FIREBASE ---
     const loadProducts = async () => {
         try {
-            // Ambil dari Collection 'products'
             const q = query(collection(db, "products"), orderBy("name")); 
             const querySnapshot = await getDocs(q);
+            const allProducts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             
-            const allProducts = querySnapshot.docs.map(doc => ({
-                id: doc.id, // ID dari Firebase (String acak)
-                ...doc.data()
-            }));
-            
-            setProducts(allProducts.reverse()); // Balik agar yang baru di atas
+            setProducts(allProducts.reverse()); 
             const cats = [...new Set(allProducts.map(p => p.category).filter(c => c))].sort();
             setUniqueCategories(cats);
         } catch (error) {
@@ -117,7 +110,6 @@ const InventoryView = () => {
         setModalOpen(true);
     };
 
-    // --- LOGIKA HAPUS DI FIREBASE ---
     const handleDelete = async (id) => {
         if (confirm('Hapus produk ini dari Cloud?')) {
             try {
@@ -127,9 +119,36 @@ const InventoryView = () => {
         }
     };
 
-    // --- LOGIKA SIMPAN DI FIREBASE ---
+    const checkDuplicateBarcode = (code, excludeId = null) => {
+        if (!code) return false;
+        const normalizedCode = code.trim();
+        for (let p of products) {
+            if (excludeId && p.id === excludeId) continue; 
+            if (p.barcode === normalizedCode) return `Barcode '${normalizedCode}' sudah dipakai produk: ${p.name}`;
+            if (p.multi_units && p.multi_units.length > 0) {
+                const foundUnit = p.multi_units.find(u => u.barcode === normalizedCode);
+                if (foundUnit) return `Barcode '${normalizedCode}' sudah dipakai satuan ${foundUnit.name} di produk: ${p.name}`;
+            }
+        }
+        return false;
+    };
+
     const handleSave = async (e) => {
         e.preventDefault();
+        
+        const mainError = checkDuplicateBarcode(formData.barcode, editingProduct?.id);
+        if (mainError) return alert(mainError);
+
+        if (formData.multi_units && formData.multi_units.length > 0) {
+            for (let unit of formData.multi_units) {
+                if (unit.barcode) {
+                    const unitError = checkDuplicateBarcode(unit.barcode, editingProduct?.id);
+                    if (unitError) return alert(unitError);
+                    if (unit.barcode === formData.barcode) return alert(`Barcode satuan ${unit.name} tidak boleh sama dengan barcode utama!`);
+                }
+            }
+        }
+
         const payload = {
             ...formData,
             barcode: formData.barcode || Date.now().toString(), 
@@ -143,18 +162,11 @@ const InventoryView = () => {
 
         try {
             if (editingProduct) {
-                // UPDATE Data Lama
                 const productRef = doc(db, "products", editingProduct.id);
                 await updateDoc(productRef, payload);
             } else {
-                // TAMBAH Data Baru (AddDoc)
-                // Cek duplikat barcode manual (client side check)
-                const exist = products.find(p => p.barcode === payload.barcode);
-                if (exist) return alert('Barcode sudah ada!');
-                
                 await addDoc(collection(db, "products"), payload);
             }
-            
             setModalOpen(false); resetForm(); setEditingProduct(null); loadProducts();
         } catch (e) {
             alert("Gagal simpan ke Cloud: " + e.message);
@@ -253,10 +265,20 @@ const InventoryView = () => {
                                                 <input value={formData.barcode} onChange={e => setFormData({...formData, barcode: e.target.value})} className="w-full border p-2 rounded-lg font-mono text-slate-600" placeholder="Scan / Ketik..." />
                                                 <button type="button" onClick={() => setFormData({...formData, barcode: Date.now().toString()})} className="px-3 bg-slate-100 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-200">Auto</button>
                                             </div>
+                                            {/* --- PREVIEW & TOMBOL CETAK LABEL (ULTIMATE 58MM) --- */}
                                             {barcodeImg && (
                                                 <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-col items-center">
                                                     <img src={barcodeImg} alt="Barcode Preview" className="h-10 object-contain mix-blend-multiply" />
-                                                    <button type="button" onClick={handleDownloadBarcode} className="mt-2 text-[10px] text-blue-600 hover:underline flex items-center gap-1"><Download size={10}/> Download Label</button>
+                                                    <div className="flex gap-2 mt-2 w-full">
+                                                        <button type="button" onClick={handleDownloadBarcode} className="flex-1 py-1.5 text-[10px] bg-white border border-slate-300 rounded hover:bg-slate-100 font-bold text-slate-600 flex justify-center items-center gap-1"><Download size={12}/> Download PNG</button>
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => printLabel58mm(formData.name || 'Produk', formData.price, barcodeImg, formData.barcode)} 
+                                                            className="flex-1 py-1.5 text-[10px] bg-slate-800 text-white rounded hover:bg-black font-bold flex justify-center items-center gap-1 shadow-md"
+                                                        >
+                                                            <Printer size={12}/> Cetak Label (58mm)
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
